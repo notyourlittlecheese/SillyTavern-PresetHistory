@@ -166,7 +166,12 @@ function extractPresetInfo(body) {
         }
     }
 
-    if (!presetName) presetName = '当前预设';
+    // Never merge nameless saves into a shared fallback bucket. Missing one
+    // snapshot is safer than mixing histories from unrelated presets.
+    if (!presetName) {
+        console.warn('[PresetHistory] 无法确定预设名称，已跳过本次备份');
+        return null;
+    }
 
     return { name: presetName, data: presetData };
 }
