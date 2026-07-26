@@ -82,27 +82,45 @@ var lastInterceptedBody = null;
 function extractPresetInfo(body) {
     if (!body || typeof body !== 'object') return null;
 
+    // Current SillyTavern versions save presets with:
+    // { preset: <preset data>, name: <preset name>, apiId: 'openai' }
+    // The request name is authoritative. In particular, when "Save as" is used,
+    // the select element is not updated until after this request completes, so
+    // falling back to the selected option would put the copy in the original
+    // preset's history.
+    var isPresetSaveBody = body.preset
+        && (!body.apiId || body.apiId === 'openai')
+        && typeof body.preset === 'object'
+        && !Array.isArray(body.preset)
+        && Object.keys(body.preset).length > 0;
+    var presetData = isPresetSaveBody ? body.preset : null;
+    var presetName = isPresetSaveBody && typeof body.name === 'string' && body.name.trim()
+        ? body.name.trim()
+        : null;
+
     // ---- 尝试找预设名 ----
     var nameFields = [
         'preset_settings_openai',   // 一些版本用这个
         'openai_setting',           // 另一些版本
     ];
-    var presetName = null;
-    for (var i = 0; i < nameFields.length; i++) {
-        if (body[nameFields[i]] && typeof body[nameFields[i]] === 'string') {
-            presetName = body[nameFields[i]];
-            break;
+    if (!presetName) {
+        for (var i = 0; i < nameFields.length; i++) {
+            if (body[nameFields[i]] && typeof body[nameFields[i]] === 'string') {
+                presetName = body[nameFields[i]];
+                break;
+            }
         }
     }
 
     // ---- 尝试找预设数据 ----
     // 方案A：body里有独立的 oai_settings / openai_settings 对象
     var dataFields = ['oai_settings', 'openai_settings'];
-    var presetData = null;
-    for (var j = 0; j < dataFields.length; j++) {
-        if (body[dataFields[j]] && typeof body[dataFields[j]] === 'object' && Object.keys(body[dataFields[j]]).length > 0) {
-            presetData = body[dataFields[j]];
-            break;
+    if (!presetData) {
+        for (var j = 0; j < dataFields.length; j++) {
+            if (body[dataFields[j]] && typeof body[dataFields[j]] === 'object' && Object.keys(body[dataFields[j]]).length > 0) {
+                presetData = body[dataFields[j]];
+                break;
+            }
         }
     }
 
