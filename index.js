@@ -67,6 +67,14 @@ function deepClone(obj) {
     catch (e) { return JSON.parse(JSON.stringify(obj)); }
 }
 
+function isLockedPromptDetach(target, settings) {
+    return !!(settings
+        && settings.lockParams
+        && target
+        && typeof target.closest === 'function'
+        && target.closest('#completion_prompt_manager .prompt-manager-detach-action'));
+}
+
 // ========== 从请求体里提取预设 ==========
 
 // 缓存最后一次拦截到的完整请求体（给手动备份用）
@@ -595,9 +603,25 @@ async function restoreSnapshot(presetName, snap) {
 // ========== 锁定功能 ==========
 
 var lockStyleAdded = false;
+var lockGuardsInstalled = false;
+
+function installLockGuards() {
+    if (lockGuardsInstalled) return;
+
+    // PromptManager registers its Remove handler on the button itself. Capture
+    // the click first so a locked detach can never reach that handler.
+    document.addEventListener('click', function (event) {
+        if (!isLockedPromptDetach(event.target, getSettings())) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+    }, true);
+
+    lockGuardsInstalled = true;
+}
 
 function applyLocks() {
     var s = getSettings();
+    installLockGuards();
 
     // 添加锁定样式（只加一次）
     if (!lockStyleAdded) {
@@ -606,6 +630,7 @@ function applyLocks() {
         style.textContent = ''
             + '.ph-locked-params #range_block_openai { pointer-events: none; opacity: 0.5; position: relative; }'
             + '.ph-locked-params #range_block_openai::after { content: "🔒 参数已锁定"; position: absolute; top: 4px; right: 8px; font-size: 12px; opacity: 0.8; }'
+            + '.ph-locked-params #completion_prompt_manager .prompt-manager-detach-action { opacity: 0.3 !important; cursor: not-allowed !important; }'
             + '.ph-locked-prompts #completion_prompt_manager { pointer-events: none; opacity: 0.5; position: relative; }'
             + '.ph-locked-prompts #completion_prompt_manager::after { content: "🔒 条目已锁定"; position: absolute; top: 4px; right: 8px; font-size: 12px; opacity: 0.8; }'
             + '.ph-locked-prompts .completion_prompt_manager_popup { pointer-events: none; opacity: 0.5; }'
