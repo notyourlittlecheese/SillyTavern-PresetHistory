@@ -78,10 +78,28 @@ function isLockedPromptDetach(target, settings) {
 
 function isLockedPromptOrderDrag(target, settings, touchOnly) {
     if (!settings || !settings.lockPromptOrder || !target || typeof target.closest !== 'function') return false;
-    var selector = touchOnly
-        ? '#completion_prompt_manager_list .drag-handle'
-        : '#completion_prompt_manager_list .completion_prompt_manager_prompt_draggable';
-    return !!target.closest(selector);
+    if (!target.closest('#completion_prompt_manager_list')) return false;
+
+    var interactiveSelector = [
+        'button',
+        'input',
+        'select',
+        'textarea',
+        'a',
+        '[contenteditable="true"]',
+        '.prompt-manager-detach-action',
+        '.prompt-manager-edit-action',
+        '.prompt-manager-inspect-action',
+        '.prompt-manager-toggle-action',
+        '.prompt_manager_prompt_toggle',
+        '.prompt-toggle',
+        '[data-pm-toggle]',
+    ].join(',');
+    if (target.closest(interactiveSelector)) return false;
+
+    return touchOnly
+        ? !!target.closest('.drag-handle, .ui-sortable-handle')
+        : !!target.closest('.completion_prompt_manager_prompt_draggable, .ui-sortable-handle, .drag-handle');
 }
 
 // ========== 从请求体里提取预设 ==========
@@ -614,15 +632,74 @@ async function restoreSnapshot(presetName, snap) {
 var lockStyleAdded = false;
 var lockGuardsInstalled = false;
 var promptOrderLockObserver = null;
+var promptOrderLockApplyTimer = null;
+var promptOrderSortablePatched = false;
+
+function withPromptOrderLockOptions(options) {
+    var next = {};
+    for (var key in options) next[key] = options[key];
+    next.items = '.preset-history-no-sortable-items';
+    next.cancel = '#completion_prompt_manager_list *';
+    next.disabled = true;
+    return next;
+}
+
+function installPromptOrderSortablePatch() {
+    if (promptOrderSortablePatched || !jQuery.fn || typeof jQuery.fn.sortable !== 'function') return;
+
+    var originalSortable = jQuery.fn.sortable;
+    jQuery.fn.sortable = function () {
+        var args = Array.prototype.slice.call(arguments);
+        var targetsPromptList = false;
+        try { targetsPromptList = this.filter('#completion_prompt_manager_list').length > 0; } catch (e) { /* not a normal jQuery object */ }
+
+        if (targetsPromptList && getSettings().lockPromptOrder && args[0] && typeof args[0] === 'object') {
+            args[0] = withPromptOrderLockOptions(args[0]);
+        }
+
+        var result = originalSortable.apply(this, args);
+        if (targetsPromptList && getSettings().lockPromptOrder && args[0] && typeof args[0] === 'object') {
+            setTimeout(function () { applyPromptOrderLock(true); }, 0);
+        }
+        return result;
+    };
+
+    promptOrderSortablePatched = true;
+}
+
+function getPromptOrderSortableDefaults($list) {
+    var defaults = $list.data('presetHistorySortableDefaults');
+    if (defaults) return defaults;
+
+    defaults = {};
+    try { defaults.disabled = $list.sortable('option', 'disabled'); } catch (e) { /* not initialized */ }
+    try { defaults.items = $list.sortable('option', 'items'); } catch (e) { /* not initialized */ }
+    try { defaults.cancel = $list.sortable('option', 'cancel'); } catch (e) { /* not initialized */ }
+    $list.data('presetHistorySortableDefaults', defaults);
+    return defaults;
+}
 
 function applyPromptOrderLock(locked) {
     var $list = jQuery('#completion_prompt_manager_list');
     if (!$list.length || typeof $list.sortable !== 'function') return false;
 
     try {
-        var isDisabled = $list.sortable('option', 'disabled');
-        if (typeof isDisabled === 'boolean' && locked === isDisabled) return true;
-        $list.sortable('option', 'disabled', !!locked);
+        var defaults = getPromptOrderSortableDefaults($list);
+        if (locked) {
+            $list.sortable('option', 'items', '.preset-history-no-sortable-items');
+            $list.sortable('option', 'cancel', '#completion_prompt_manager_list *');
+            $list.sortable('option', 'disabled', true);
+        } else {
+            var restoreItems = defaults.items && defaults.items !== '.preset-history-no-sortable-items'
+                ? defaults.items
+                : '.completion_prompt_manager_prompt_draggable';
+            var restoreCancel = typeof defaults.cancel !== 'undefined' && defaults.cancel !== '#completion_prompt_manager_list *'
+                ? defaults.cancel
+                : 'input,textarea,button,select,option';
+            $list.sortable('option', 'items', restoreItems);
+            $list.sortable('option', 'cancel', restoreCancel);
+            $list.sortable('option', 'disabled', false);
+        }
         return true;
     } catch (e) {
         console.warn('[PresetHistory] 切换条目顺序锁失败:', e);
@@ -630,21 +707,30 @@ function applyPromptOrderLock(locked) {
     }
 }
 
+function schedulePromptOrderLockApply() {
+    if (promptOrderLockApplyTimer) clearTimeout(promptOrderLockApplyTimer);
+    promptOrderLockApplyTimer = setTimeout(function () {
+        promptOrderLockApplyTimer = null;
+        if (getSettings().lockPromptOrder) applyPromptOrderLock(true);
+    }, 50);
+}
+
 function cancelLockedPromptOrderSort(element, settings) {
     if (!settings || !settings.lockPromptOrder) return false;
     try { jQuery(element).sortable('cancel'); } catch (e) { /* already disabled */ }
+    applyPromptOrderLock(true);
     return true;
 }
 
 function installPromptOrderLockObserver() {
     if (promptOrderLockObserver || typeof MutationObserver === 'undefined') return;
-    var container = document.getElementById('completion_prompt_manager');
+    var container = document.getElementById('completion_prompt_manager') || document.body;
     if (!container) return;
 
     promptOrderLockObserver = new MutationObserver(function () {
         if (!getSettings().lockPromptOrder) return;
         // PromptManager may rebuild and reinitialize the sortable list.
-        setTimeout(function () { applyPromptOrderLock(true); }, 0);
+        schedulePromptOrderLockApply();
     });
     promptOrderLockObserver.observe(container, {
         childList: true,
@@ -666,13 +752,17 @@ function installLockGuards() {
     }, true);
 
     // jQuery UI's disabled state can be reset when PromptManager rebuilds.
-    // Block the initiating mouse event as a hard guard; later click events on
-    // edit/toggle controls are unaffected.
-    document.addEventListener('mousedown', function (event) {
+    // Block the initiating pointer/mouse event as a hard guard; later click
+    // events on edit/toggle controls are unaffected.
+    var blockPromptOrderDragStart = function (event) {
         if (!isLockedPromptOrderDrag(event.target, getSettings(), false)) return;
         event.preventDefault();
         event.stopImmediatePropagation();
-    }, true);
+        schedulePromptOrderLockApply();
+    };
+    document.addEventListener('pointerdown', blockPromptOrderDragStart, true);
+    document.addEventListener('mousedown', blockPromptOrderDragStart, true);
+    document.addEventListener('dragstart', blockPromptOrderDragStart, true);
 
     // On mobile PromptManager only drags from .drag-handle. Blocking just that
     // handle preserves taps on all other prompt controls.
@@ -680,6 +770,7 @@ function installLockGuards() {
         if (!isLockedPromptOrderDrag(event.target, getSettings(), true)) return;
         event.preventDefault();
         event.stopImmediatePropagation();
+        schedulePromptOrderLockApply();
     }, { capture: true, passive: false });
 
     // Safety net for a list rebuilt between observer callbacks.
@@ -695,6 +786,7 @@ function installLockGuards() {
 function applyLocks() {
     var s = getSettings();
     installLockGuards();
+    installPromptOrderSortablePatch();
     installPromptOrderLockObserver();
 
     // 添加锁定样式（只加一次）
@@ -734,6 +826,7 @@ function applyLocks() {
 
     if (s.lockPromptOrder) {
         $body.addClass('ph-locked-prompt-order');
+        schedulePromptOrderLockApply();
     } else {
         $body.removeClass('ph-locked-prompt-order');
     }
