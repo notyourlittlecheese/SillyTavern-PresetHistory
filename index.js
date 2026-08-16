@@ -19,6 +19,7 @@ const DEFAULTS = {
     autoSavePreset: true,
     lockParams: false,    // 锁定参数（温度、top_p等）
     lockPrompts: false,   // 锁定条目（内容、顺序、开关）
+    lockPromptOrder: false, // 只锁定条目拖拽顺序
     maxSnapshotsPerPreset: 30,
     snapshots: {},
 };
@@ -604,6 +605,40 @@ async function restoreSnapshot(presetName, snap) {
 
 var lockStyleAdded = false;
 var lockGuardsInstalled = false;
+var promptOrderLockObserver = null;
+
+function applyPromptOrderLock(locked) {
+    var $list = jQuery('#completion_prompt_manager_list');
+    if (!$list.length || typeof $list.sortable !== 'function' || !$list.hasClass('ui-sortable')) return false;
+
+    try {
+        var isDisabled = $list.hasClass('ui-sortable-disabled');
+        if (locked === isDisabled) return true;
+        $list.sortable(locked ? 'disable' : 'enable');
+        return true;
+    } catch (e) {
+        console.warn('[PresetHistory] 切换条目顺序锁失败:', e);
+        return false;
+    }
+}
+
+function installPromptOrderLockObserver() {
+    if (promptOrderLockObserver || typeof MutationObserver === 'undefined') return;
+    var container = document.getElementById('completion_prompt_manager');
+    if (!container) return;
+
+    promptOrderLockObserver = new MutationObserver(function () {
+        if (!getSettings().lockPromptOrder) return;
+        // PromptManager may rebuild and reinitialize the sortable list.
+        setTimeout(function () { applyPromptOrderLock(true); }, 0);
+    });
+    promptOrderLockObserver.observe(container, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class'],
+    });
+}
 
 function installLockGuards() {
     if (lockGuardsInstalled) return;
@@ -616,12 +651,20 @@ function installLockGuards() {
         event.stopImmediatePropagation();
     }, true);
 
+    // Safety net for a list rebuilt between observer callbacks.
+    jQuery(document).on('sortstart.presetHistoryOrderLock', '#completion_prompt_manager_list', function () {
+        if (!getSettings().lockPromptOrder) return;
+        try { jQuery(this).sortable('cancel'); } catch (e) { /* already disabled */ }
+        return false;
+    });
+
     lockGuardsInstalled = true;
 }
 
 function applyLocks() {
     var s = getSettings();
     installLockGuards();
+    installPromptOrderLockObserver();
 
     // 添加锁定样式（只加一次）
     if (!lockStyleAdded) {
@@ -631,6 +674,8 @@ function applyLocks() {
             + '.ph-locked-params #range_block_openai { pointer-events: none; opacity: 0.5; position: relative; }'
             + '.ph-locked-params #range_block_openai::after { content: "🔒 参数已锁定"; position: absolute; top: 4px; right: 8px; font-size: 12px; opacity: 0.8; }'
             + '.ph-locked-params #completion_prompt_manager .prompt-manager-detach-action { opacity: 0.3 !important; cursor: not-allowed !important; }'
+            + '.ph-locked-prompt-order #completion_prompt_manager_list .ui-sortable-handle { cursor: default !important; }'
+            + '.ph-locked-prompt-order #completion_prompt_manager_list .drag-handle { opacity: 0.3; }'
             + '.ph-locked-prompts #completion_prompt_manager { pointer-events: none; opacity: 0.5; position: relative; }'
             + '.ph-locked-prompts #completion_prompt_manager::after { content: "🔒 条目已锁定"; position: absolute; top: 4px; right: 8px; font-size: 12px; opacity: 0.8; }'
             + '.ph-locked-prompts .completion_prompt_manager_popup { pointer-events: none; opacity: 0.5; }'
@@ -655,6 +700,13 @@ function applyLocks() {
     } else {
         $body.removeClass('ph-locked-prompts');
     }
+
+    if (s.lockPromptOrder) {
+        $body.addClass('ph-locked-prompt-order');
+    } else {
+        $body.removeClass('ph-locked-prompt-order');
+    }
+    applyPromptOrderLock(s.lockPromptOrder);
 }
 
 // ========== 自动保存预设 ==========
@@ -729,7 +781,10 @@ function addUI() {
         + '<small style="display:block;opacity:0.6;margin-bottom:4px">锁住温度、Top P、频率惩罚等滑块，防止误触。</small>'
 
         + '<label class="checkbox_label"><input id="ph_lock_prompts" type="checkbox" /><span>🔒 锁定条目</span></label>'
-        + '<small style="display:block;opacity:0.6;margin-bottom:8px">锁住条目的内容编辑、开关和顺序拖拽。</small>'
+        + '<small style="display:block;opacity:0.6;margin-bottom:4px">锁住条目的内容编辑、开关和顺序拖拽。</small>'
+
+        + '<label class="checkbox_label"><input id="ph_lock_prompt_order" type="checkbox" /><span>🔒 锁定条目顺序</span></label>'
+        + '<small style="display:block;opacity:0.6;margin-bottom:8px">只禁止拖拽排序，其他条目操作保持可用。</small>'
 
         + '<div style="margin:6px 0"><label>每个预设最多保留 <input id="ph_max_snapshots" type="number" min="1" max="500" style="width:60px" /> 个版本</label>'
         + '<br/><small style="opacity:0.6">超出后自动删除最老的。</small></div>'
@@ -777,6 +832,12 @@ function addUI() {
     // 锁定条目
     jQuery('#ph_lock_prompts').prop('checked', s.lockPrompts).on('change', function () {
         s.lockPrompts = this.checked; saveSettingsDebounced();
+        applyLocks();
+    });
+
+    // 只锁定条目顺序
+    jQuery('#ph_lock_prompt_order').prop('checked', s.lockPromptOrder).on('change', function () {
+        s.lockPromptOrder = this.checked; saveSettingsDebounced();
         applyLocks();
     });
 
