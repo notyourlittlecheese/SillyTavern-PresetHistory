@@ -172,8 +172,12 @@ test('hard-blocks mobile drag initiation on the drag handle', () => {
     assert.equal(detectsDrag({ locked: true, touchOnly: true, desktopItem: true, dragHandle: true }), true);
 });
 
-test('keeps non-handle mobile controls available while order is locked', () => {
-    assert.equal(detectsDrag({ locked: true, touchOnly: true, desktopItem: true, dragHandle: false }), false);
+test('hard-blocks mobile drag initiation anywhere in the prompt list', () => {
+    assert.equal(detectsDrag({ locked: true, touchOnly: true, desktopItem: false, dragHandle: false }), true);
+});
+
+test('keeps mobile prompt controls available while order is locked', () => {
+    assert.equal(detectsDrag({ locked: true, touchOnly: true, desktopItem: true, dragHandle: false, interactive: true }), false);
 });
 
 test('does not intercept drag events after the order lock is disabled', () => {

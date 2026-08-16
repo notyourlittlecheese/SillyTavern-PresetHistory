@@ -98,7 +98,7 @@ function isLockedPromptOrderDrag(target, settings, touchOnly) {
     if (target.closest(interactiveSelector)) return false;
 
     return touchOnly
-        ? !!target.closest('.drag-handle, .ui-sortable-handle')
+        ? true
         : !!target.closest('.completion_prompt_manager_prompt_draggable, .ui-sortable-handle, .drag-handle');
 }
 
@@ -756,7 +756,7 @@ function installLockGuards() {
     // events on edit/toggle controls are unaffected.
     var blockPromptOrderDragStart = function (event) {
         if (!isLockedPromptOrderDrag(event.target, getSettings(), false)) return;
-        event.preventDefault();
+        if (event.pointerType !== 'touch') event.preventDefault();
         event.stopImmediatePropagation();
         schedulePromptOrderLockApply();
     };
@@ -764,11 +764,10 @@ function installLockGuards() {
     document.addEventListener('mousedown', blockPromptOrderDragStart, true);
     document.addEventListener('dragstart', blockPromptOrderDragStart, true);
 
-    // On mobile PromptManager only drags from .drag-handle. Blocking just that
-    // handle preserves taps on all other prompt controls.
+    // On mobile, block list touches before touch-punch can synthesize mouse
+    // drag events. Do not preventDefault so the list can still scroll.
     document.addEventListener('touchstart', function (event) {
         if (!isLockedPromptOrderDrag(event.target, getSettings(), true)) return;
-        event.preventDefault();
         event.stopImmediatePropagation();
         schedulePromptOrderLockApply();
     }, { capture: true, passive: false });
@@ -798,7 +797,7 @@ function applyLocks() {
             + '.ph-locked-params #range_block_openai::after { content: "🔒 参数已锁定"; position: absolute; top: 4px; right: 8px; font-size: 12px; opacity: 0.8; }'
             + '.ph-locked-params #completion_prompt_manager .prompt-manager-detach-action { opacity: 0.3 !important; cursor: not-allowed !important; }'
             + '.ph-locked-prompt-order #completion_prompt_manager_list .ui-sortable-handle { cursor: default !important; }'
-            + '.ph-locked-prompt-order #completion_prompt_manager_list .drag-handle { opacity: 0.3; }'
+            + '.ph-locked-prompt-order #completion_prompt_manager_list .drag-handle { opacity: 0.3; pointer-events: none !important; }'
             + '.ph-locked-prompts #completion_prompt_manager { pointer-events: none; opacity: 0.5; position: relative; }'
             + '.ph-locked-prompts #completion_prompt_manager::after { content: "🔒 条目已锁定"; position: absolute; top: 4px; right: 8px; font-size: 12px; opacity: 0.8; }'
             + '.ph-locked-prompts .completion_prompt_manager_popup { pointer-events: none; opacity: 0.5; }'
