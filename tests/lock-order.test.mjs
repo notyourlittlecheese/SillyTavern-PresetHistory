@@ -20,13 +20,14 @@ function runLock(locked, { present = true, initialized = true, disabled = false 
             assert.equal(selector, '#completion_prompt_manager_list');
             return {
                 length: present ? 1 : 0,
-                hasClass(name) {
-                    if (name === 'ui-sortable') return initialized;
-                    if (name === 'ui-sortable-disabled') return disabled;
-                    throw new Error('Unexpected class check: ' + name);
-                },
-                sortable(command) {
-                    commands.push(command);
+                sortable(command, option, value) {
+                    if (!initialized) throw new Error('not initialized');
+                    if (command === 'option' && option === 'disabled' && arguments.length === 2) return disabled;
+                    if (command === 'option' && option === 'disabled' && arguments.length === 3) {
+                        commands.push(value);
+                        return;
+                    }
+                    throw new Error('Unexpected sortable call');
                 },
             };
         },
@@ -37,11 +38,11 @@ function runLock(locked, { present = true, initialized = true, disabled = false 
 }
 
 test('disables SillyTavern sortable when order lock is enabled', () => {
-    assert.deepEqual(runLock(true), { applied: true, commands: ['disable'] });
+    assert.deepEqual(runLock(true), { applied: true, commands: [true] });
 });
 
 test('re-enables SillyTavern sortable when order lock is disabled', () => {
-    assert.deepEqual(runLock(false, { disabled: true }), { applied: true, commands: ['enable'] });
+    assert.deepEqual(runLock(false, { disabled: true }), { applied: true, commands: [false] });
 });
 
 test('waits safely when the prompt list has not initialized yet', () => {
@@ -50,6 +51,30 @@ test('waits safely when the prompt list has not initialized yet', () => {
 
 test('does not repeatedly disable an already locked sortable list', () => {
     assert.deepEqual(runLock(true, { disabled: true }), { applied: true, commands: [] });
+});
+
+function runCancel(locked) {
+    const commands = [];
+    const context = vm.createContext({
+        element: {},
+        settings: { lockPromptOrder: locked },
+        console,
+        jQuery(received) {
+            assert.equal(received, context.element);
+            return { sortable(command) { commands.push(command); } };
+        },
+    });
+    vm.runInContext(helper, context);
+    const cancelled = vm.runInContext('cancelLockedPromptOrderSort(element, settings)', context);
+    return { cancelled, commands };
+}
+
+test('cancels any sort that still starts while order is locked', () => {
+    assert.deepEqual(runCancel(true), { cancelled: true, commands: ['cancel'] });
+});
+
+test('allows sort completion after the order lock is disabled', () => {
+    assert.deepEqual(runCancel(false), { cancelled: false, commands: [] });
 });
 
 function detectsDrag({ locked, touchOnly, desktopItem, dragHandle }) {

@@ -617,17 +617,23 @@ var promptOrderLockObserver = null;
 
 function applyPromptOrderLock(locked) {
     var $list = jQuery('#completion_prompt_manager_list');
-    if (!$list.length || typeof $list.sortable !== 'function' || !$list.hasClass('ui-sortable')) return false;
+    if (!$list.length || typeof $list.sortable !== 'function') return false;
 
     try {
-        var isDisabled = $list.hasClass('ui-sortable-disabled');
-        if (locked === isDisabled) return true;
-        $list.sortable(locked ? 'disable' : 'enable');
+        var isDisabled = $list.sortable('option', 'disabled');
+        if (typeof isDisabled === 'boolean' && locked === isDisabled) return true;
+        $list.sortable('option', 'disabled', !!locked);
         return true;
     } catch (e) {
         console.warn('[PresetHistory] 切换条目顺序锁失败:', e);
         return false;
     }
+}
+
+function cancelLockedPromptOrderSort(element, settings) {
+    if (!settings || !settings.lockPromptOrder) return false;
+    try { jQuery(element).sortable('cancel'); } catch (e) { /* already disabled */ }
+    return true;
 }
 
 function installPromptOrderLockObserver() {
@@ -677,9 +683,9 @@ function installLockGuards() {
     }, { capture: true, passive: false });
 
     // Safety net for a list rebuilt between observer callbacks.
-    jQuery(document).on('sortstart.presetHistoryOrderLock', '#completion_prompt_manager_list', function () {
-        if (!getSettings().lockPromptOrder) return;
-        try { jQuery(this).sortable('cancel'); } catch (e) { /* already disabled */ }
+    jQuery(document).on('sortstart.presetHistoryOrderLock sortupdate.presetHistoryOrderLock', '#completion_prompt_manager_list', function (event) {
+        if (!cancelLockedPromptOrderSort(this, getSettings())) return;
+        if (event.type === 'sortupdate') toastr.warning('条目顺序已锁定，排序未保存');
         return false;
     });
 
@@ -777,7 +783,10 @@ function installAutoSave() {
     jQuery(document).on('click.presetHistory', '.prompt_manager_prompt_toggle, .prompt-toggle, [data-pm-toggle]', triggerPresetSave);
 
     // 4. 条目拖拽排序完成
-    jQuery(document).on('sortupdate.presetHistory', triggerPresetSave);
+    jQuery(document).on('sortupdate.presetHistory', function () {
+        if (getSettings().lockPromptOrder) return;
+        triggerPresetSave();
+    });
 
     autoSaveInstalled = true;
     console.log('[PresetHistory] 自动保存已安装');
