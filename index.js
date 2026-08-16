@@ -76,6 +76,14 @@ function isLockedPromptDetach(target, settings) {
         && target.closest('#completion_prompt_manager .prompt-manager-detach-action'));
 }
 
+function isLockedPromptOrderDrag(target, settings, touchOnly) {
+    if (!settings || !settings.lockPromptOrder || !target || typeof target.closest !== 'function') return false;
+    var selector = touchOnly
+        ? '#completion_prompt_manager_list .drag-handle'
+        : '#completion_prompt_manager_list .completion_prompt_manager_prompt_draggable';
+    return !!target.closest(selector);
+}
+
 // ========== 从请求体里提取预设 ==========
 
 // 缓存最后一次拦截到的完整请求体（给手动备份用）
@@ -650,6 +658,23 @@ function installLockGuards() {
         event.preventDefault();
         event.stopImmediatePropagation();
     }, true);
+
+    // jQuery UI's disabled state can be reset when PromptManager rebuilds.
+    // Block the initiating mouse event as a hard guard; later click events on
+    // edit/toggle controls are unaffected.
+    document.addEventListener('mousedown', function (event) {
+        if (!isLockedPromptOrderDrag(event.target, getSettings(), false)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+    }, true);
+
+    // On mobile PromptManager only drags from .drag-handle. Blocking just that
+    // handle preserves taps on all other prompt controls.
+    document.addEventListener('touchstart', function (event) {
+        if (!isLockedPromptOrderDrag(event.target, getSettings(), true)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+    }, { capture: true, passive: false });
 
     // Safety net for a list rebuilt between observer callbacks.
     jQuery(document).on('sortstart.presetHistoryOrderLock', '#completion_prompt_manager_list', function () {
